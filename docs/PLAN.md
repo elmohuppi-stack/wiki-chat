@@ -325,6 +325,185 @@ Beim Import eines Dokuments werden **nur die aktivierten Pipelines** ausgeführt
 
 ---
 
+## � Deployment (Hetzner)
+
+Die App wird nach dem **Deployment-Standard** (`docs/deployment-standard.md`) auf einem Hetzner-Multi-App-Server deployed.
+
+### Entwicklungs-Setup (lokal — Hybrid)
+
+Backend + Frontend laufen **nativ** auf macOS für maximalen Hot-Reload.  
+Datenbank-Services laufen in Docker.
+
+```bash
+# 1. Services starten (PostgreSQL + pgvector, Redis, Parser)
+docker compose up -d db redis parser
+
+# 2. Backend nativ (Hot-Reload in <50ms)
+bun run dev
+
+# 3. Frontend nativ (Vite HMR)
+cd frontend && bun run dev
+```
+
+### Produktions-Setup (Hetzner — alles in Docker)
+
+Nach dem Deployment-Standard:
+
+| Service                        | Docker-Image                    | Port                            | Netzwerk                           |
+| ------------------------------ | ------------------------------- | ------------------------------- | ---------------------------------- |
+| **app** (`bun run start`)      | Build aus `backend/Dockerfile`  | `127.0.0.1:${WEB_PORT}:3000`    | `appnet` + `hetzner-network`       |
+| **frontend** (Nginx SPA)       | Build aus `frontend/Dockerfile` | `127.0.0.1:${FRONTEND_PORT}:80` | `hetzner-network`                  |
+| **db** (PostgreSQL + pgvector) | `pgvector/pgvector:pg17`        | —                               | `appnet` (Alias: `wikichat-db`)    |
+| **redis**                      | `redis:7-alpine`                | —                               | `appnet` (Alias: `wikichat-redis`) |
+| **parser** (MarkItDown)        | Build aus `parser/Dockerfile`   | —                               | `appnet`                           |
+
+### docker-compose.yml
+
+```yaml
+services:
+  app:
+    build: ./backend
+    ports:
+      - "127.0.0.1:${WEB_PORT}:3000"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - appnet
+      - hetzner-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT}:80"
+    restart: unless-stopped
+    networks:
+      - hetzner-network
+
+  db:
+    image: pgvector/pgvector:pg17
+    volumes:
+      - data:/var/lib/postgresql/data
+    env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-wikichat}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      appnet:
+        aliases:
+          - wikichat-db
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+    restart: unless-stopped
+    networks:
+      appnet:
+        aliases:
+          - wikichat-redis
+
+  parser:
+    build: ./parser
+    env_file: .env
+    restart: unless-stopped
+    networks:
+      - appnet
+
+volumes:
+  data:
+  redis-data:
+
+networks:
+  appnet:
+  hetzner-network:
+    external: true
+```
+
+### .env-Standard (nach Deployment-Standard)
+
+```env
+# === Deployment (Pflicht) ===
+APP_SLUG=wikichat
+WEB_PORT=3083
+FRONTEND_PORT=3084
+
+# === Datenbank ===
+DB_USER=wikichat
+DB_PASSWORD=<generiert>
+DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@wikichat-db:5432/wikichat
+
+# === Redis ===
+REDIS_URL=redis://wikichat-redis:6379
+
+# === App ===
+JWT_SECRET=<generiert>
+PARSER_URL=http://parser:8000/parse
+```
+
+### Nginx (auf dem Hetzner-Host)
+
+```nginx
+# /etc/nginx/sites-available/wikichat.conf
+
+# Frontend
+server {
+    server_name wikichat.elmarhepp.de;
+    listen 443 ssl;
+    # ... SSL-Konfiguration ...
+    location / {
+        proxy_pass http://127.0.0.1:${FRONTEND_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # SSE-Support für Chat-Streaming
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+    }
+}
+
+# API (inkl. SSE-Streaming)
+server {
+    server_name wikichat-api.elmarhepp.de;
+    listen 443 ssl;
+    # ... SSL-Konfiguration ...
+    location / {
+        proxy_pass http://127.0.0.1:${WEB_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # Kein Buffering für SSE-Streaming
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+    }
+}
+```
+
+### Deploy-Script
+
+```bash
+#!/bin/bash
+# deploy.sh — nach dem Standard-Pattern von mediathek
+rsync -avz --delete \
+  --exclude .env \
+  --exclude node_modules \
+  --exclude .git \
+  ./ $HOST:/var/www/wikichat/
+ssh $HOST "cd /var/www/wikichat && docker compose up -d --build"
+```
+
+---
+
 ## 📁 Projekt-Struktur
 
 ```
@@ -349,6 +528,7 @@ wiki-chat/
 │   │   ├── repository/            # Drizzle Queries
 │   │   ├── db/                    # Drizzle Schema + Migrations + Seed
 │   │   └── middleware/            # JWT Auth + RBAC
+│   ├── Dockerfile                 # Bun → Production
 │   └── package.json
 ├── frontend/
 │   ├── src/
@@ -363,11 +543,16 @@ wiki-chat/
 │   │   ├── components/editor/     # TipTap Wiki-Editor mit [[Links]]-Support
 │   │   ├── components/wiki-graph/ # D3.js Force-Directed Graph
 │   │   └── router/
+│   ├── Dockerfile                 # Multi-Stage: Vite Build → Nginx
 │   └── package.json
 ├── parser/                        # Python Microservice (MarkItDown)
 │   ├── main.py                    # HTTP API für PDF/DOCX/MD/HTML-Parsing
+│   ├── Dockerfile                 # python:3.12-slim
 │   └── requirements.txt
-├── docker-compose.yml             # PostgreSQL, Redis, Backend (Bun), Frontend, Parser
+├── docker-compose.yml             # Prod: App + Frontend + DB + Redis + Parser
+├── docker-compose.dev.yml         # Dev: Nur DB + Redis + Parser (Backend/Frontend nativ)
+├── .env.example
+├── deploy.sh
 ├── Makefile
 └── README.md
 ```
@@ -410,7 +595,7 @@ Nach intensiver Analyse des WeKnora-Codes:
 
 ## 🚀 Nächste Schritte (10 Phasen)
 
-1. **Projekt-Setup**: Monorepo (Bun + Hono + Vue + Drizzle + Docker Compose)
+1. **Projekt-Setup**: Monorepo (Bun + Hono + Vue + Drizzle) + `docker-compose.yml` + `docker-compose.dev.yml` nach Hetzner-Standard
 2. **Datenbank**: PostgreSQL + pgvector + Drizzle Schema + Migrationen
 3. **Auth**: JWT-Login/Register + Middleware
 4. **Admin**: User- und Model-Verwaltung (Vue-Komponenten)
@@ -420,3 +605,17 @@ Nach intensiver Analyse des WeKnora-Codes:
 8. **Chat**: RAG-Chat mit Vercel AI SDK + SSE
 9. **Wiki**: Auto-Generierung + TipTap-Editor + Browser
 10. **YouTube-Import**: Transkript → Wiki-Seite
+
+---
+
+### Entwicklungskurzreferenz
+
+```bash
+# Täglicher Dev-Workflow
+docker compose -f docker-compose.dev.yml up -d   # DB + Redis + Parser
+bun run dev                                       # Backend (Port 3000, Hot-Reload)
+cd frontend && bun run dev                        # Frontend (Port 5173, Vite HMR)
+
+# Deployment
+./deploy.sh                                       # rsync + docker compose up --build
+```

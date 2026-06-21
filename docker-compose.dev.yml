@@ -1,0 +1,47 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    volumes:
+      - dev-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: wikichat
+      POSTGRES_PASSWORD: wikichat-dev
+      POSTGRES_DB: wikichat
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wikichat"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - devnet
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+    restart: unless-stopped
+    networks:
+      - devnet
+
+  parser:
+    build: ./parser
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./parser:/app
+    environment:
+      PORT: 8000
+    restart: unless-stopped
+    networks:
+      - devnet
+
+volumes:
+  dev-data:
+
+networks:
+  devnet:

@@ -5,7 +5,12 @@ services:
       dockerfile: backend/Dockerfile
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
-    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-wikichat}:${DB_PASSWORD:-changeme}@wikichat-db:5432/wikichat
+      REDIS_URL: redis://wikichat-redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      PARSER_URL: http://parser:8000/parse
+      PORT: 3000
     depends_on:
       db:
         condition: service_healthy
@@ -29,7 +34,10 @@ services:
     image: pgvector/pgvector:pg17
     volumes:
       - data:/var/lib/postgresql/data
-    env_file: .env
+    environment:
+      POSTGRES_USER: ${DB_USER:-wikichat}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: wikichat
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-wikichat}"]
       interval: 10s
@@ -55,7 +63,8 @@ services:
 
   parser:
     build: ./parser
-    env_file: .env
+    environment:
+      PORT: 8000
     restart: unless-stopped
     networks:
       - appnet

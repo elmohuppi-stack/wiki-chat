@@ -7,12 +7,16 @@ async function seed() {
 
   const password_hash = await bcrypt.hash("admin123", 12);
 
-  const [admin] = await db.insert(users).values({
-    email: "admin@wikichat.dev",
-    password_hash,
-    name: "Admin",
-    role: "admin",
-  }).onConflictDoNothing().returning();
+  const [admin] = await db
+    .insert(users)
+    .values({
+      email: "admin@wikichat.dev",
+      password_hash,
+      name: "Admin",
+      role: "admin",
+    })
+    .onConflictDoNothing()
+    .returning();
 
   if (admin) {
     console.log(`✅ Created admin user: ${admin.email} (password: admin123)`);

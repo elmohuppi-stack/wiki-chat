@@ -1,9 +1,8 @@
 import { db } from "../db/index.ts";
-import { users, sessions } from "../db/schema.ts";
+import { users } from "../db/schema.ts";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { v4 as uuid } from "uuid";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const SALT_ROUNDS = 12;

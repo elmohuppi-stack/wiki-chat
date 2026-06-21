@@ -22,7 +22,7 @@ authRouter.post("/register", zValidator("json", registerSchema), async (c) => {
     const result = await register(email, password, name);
     return c.json(result, 201);
   } catch (e: any) {
-    return c.json({ error: e.message }, 400);
+    return c.json({ error: e?.message || "Registration failed" }, 400);
   }
 });
 
@@ -32,7 +32,7 @@ authRouter.post("/login", zValidator("json", loginSchema), async (c) => {
     const result = await login(email, password);
     return c.json(result);
   } catch (e: any) {
-    return c.json({ error: e.message }, 401);
+    return c.json({ error: e?.message || "Login failed" }, 401);
   }
 });
 

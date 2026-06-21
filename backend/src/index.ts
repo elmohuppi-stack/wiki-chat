@@ -31,8 +31,10 @@ app.route("/api/v1/auth", authRouter);
 // app.route("/api/v1/search", searchRouter);
 
 const port = parseInt(process.env.PORT || "3000");
+
 console.log(`🚀 Wiki-Chat API running on port ${port}`);
-export default {
+
+Bun.serve({
   port,
   fetch: app.fetch,
-};
+});

@@ -26,8 +26,12 @@ services:
       context: ./frontend
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3084}:80"
+    depends_on:
+      app:
+        condition: service_started
     restart: unless-stopped
     networks:
+      - appnet
       - hetzner-network
 
   db:
